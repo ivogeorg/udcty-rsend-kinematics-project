@@ -110,8 +110,85 @@ def test_code(test_case):
 
     T0_EE = T0_1 + T1_2 + T2_3 + T3_4 + T4_5 + T5_6 + T6_EE
 
+    # Extract end effector position and orientation from request
+    # px, py, pz = end effector position
+    # roll, pitch, yaw = end effector orientation
+    px = req.poses[x].position.x
+    py = req.poses[x].position.y
+    pz = req.poses[x].position.z
 
-    ##
+    (roll, pitch, yaw) = tf.transformations.euler_from_quaternion(
+        [req.poses[x].orientation.x, req.poses[x].orientation.y,
+         req.poses[x].orientation.z, req.poses[x].orientation.w])
+
+    # Find EE rotation matrix
+    # Define RPY rotation matrices
+    # http://planning.cs.uiuc.edu/node102.html
+
+    r, p, y = symbols('r p y')
+
+    ROT_x = Matrix([
+        [1,      0,       0],
+        [0, cos(r), -sin(r)],
+        [0, sin(r),  cos(r)]
+    ]) # ROLL
+
+    ROT_y = Matrix([
+        [ cos(p), 0, sin(p)],
+        [      0, 1,      0],
+        [-sin(p), 0, cos(p)]
+    ]) # PITCH
+
+    ROT_z = Matrix([
+        [cos(y), -sin(y), 0],
+        [sin(y),  cos(y), 0],
+        [     0,       0, 1]
+    ]) # YAW
+
+    ROT_EE = ROT_z * ROT_y * ROT_x
+
+    # See Kuka KR210 Forward Kinematics
+    Rot_Error = ROT_z.subs(y, radians(180)) * ROT_y.subs(p, radians(-90))
+
+    ROT_EE = ROT_EE * Rot_Error
+    ROT_EE = ROT_EE.subs({'r': roll, 'p': pitch, 'y': yaw})
+
+    EE = Matrix([
+        [px],
+        [py],
+        [pz]
+    ])
+
+    WC = EE - (0.303) * ROT_EE[:,2]
+
+    # Calculate joint angles using the Geometric IK method
+    # See Kuka KR210 Inverse Kinematics
+    theta1 = atan2(WC[1], WC[0])
+
+    # SSS triangle for theta2 and theta 3
+    side_a = 1.501
+    side_b = sqrt(pow((sqrt(WC[0]*WC[0] + WC[1]*WC[1]) - 0.35),2) + pow((WC[2] - 0.75),2))
+    side_c = 1.25
+
+    angle_a = acos((- side_a*side_a + side_b*side_b + side_c*side_c)/(2*side_b*side_c))
+    angle_b = acos((  side_a*side_a - side_b*side_b + side_c*side_c)/(2*side_a*side_c))
+    angle_c = acos((  side_a*side_a + side_b*side_b - side_c*side_c)/(2*side_a*side_b))
+
+    theta2 = pi/2 - angle_a - atan2(WC[2] - 0.75, sqrt(WC[0]*WC[0] + WC[1]*WC[1]) - 0.35)
+    theta3 = pi/2 - (angle_b + 0.036) # 0.036 accounts for sag in link4 of -0.054m
+
+    R0_3 = T0_1[0:3, 0:3] * T1_2[0:3, 0:3] * T2_3[0:3, 0:3]
+    RO_3 = R0_3.evalf(subs={q1: theta1, q2: theta2, q3: theta3})
+
+    R3_6 = R0_3.inv("LU") * ROT_EE
+
+    # Euler angles from rotation matrix
+    # See Euler Angles from a Rotation Matrix
+    theta4 = atan2(R3_6[2,2], -R3_6[0,2])
+    theta5 = atan2(sqrt(R3_6[0,2]*R3_6[0,2] + R3_6[2,2]*R3_6[2,2]), R3_6[1, 2])
+    theta6 = atan2(-R3_6[1,1], R3_6[1,0])
+
+    ## Ending at: Populate response for the IK request
     ########################################################################################
     
     ########################################################################################
@@ -119,13 +196,14 @@ def test_code(test_case):
     ## as the input and output the position of your end effector as your_ee = [x,y,z]
 
     ## (OPTIONAL) YOUR CODE HERE!
+    FK = T0_EE.evalf(subs={q1: theta1, q2: theta2, q3: theta3, q4: theta4, q5: theta5, q6: theta6})
 
     ## End your code input for forward kinematics here!
     ########################################################################################
 
     ## For error analysis please set the following variables of your WC location and EE location in the format of [x,y,z]
-    your_wc = [1,1,1] # <--- Load your calculated WC values in this array
-    your_ee = [1,1,1] # <--- Load your calculated end effector value from your forward kinematics
+    your_wc = [WC[0],WC[1],WC[2]] # <--- Load your calculated WC values in this array
+    your_ee = [FK[0,3],FK[1,3],FK[2,3]] # <--- Load your calculated end effector value from your forward kinematics
     ########################################################################################
 
     ## Error analysis
